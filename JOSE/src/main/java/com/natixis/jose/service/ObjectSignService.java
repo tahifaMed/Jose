@@ -1,39 +1,39 @@
 package com.natixis.jose.service;
 
-import java.io.IOException;
-import java.io.Serializable;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateEncodingException;
-import java.security.cert.CertificateException;
+import java.security.interfaces.RSAPublicKey;
+import java.text.ParseException;
 
 import org.apache.commons.codec.digest.DigestUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.natixis.jose.model.ObjectCertificate;
 import com.natixis.jose.model.ObjectSign;
+import com.natixis.jose.util.SignUtil;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.JWSObject;
+import com.nimbusds.jose.JWSVerifier;
 import com.nimbusds.jose.Payload;
 import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jose.crypto.RSASSAVerifier;
 import com.nimbusds.jose.util.Base64URL;
 
-import net.minidev.json.JSONObject;
-
 @Service
-public class ObjectSignService implements Serializable {
+public class ObjectSignService {
 
-    private static final long serialVersionUID = 9120282007234900763L;
+    private Logger log = LoggerFactory.getLogger(ObjectSignService.class);
 
-    public ObjectSign buildObjectSign(String keyStoreFilePath, String password, String alias) throws KeyStoreException,
-            NoSuchAlgorithmException, CertificateException, IOException, UnrecoverableKeyException {
+    public ObjectSign buildObjectSign(String keyStoreFilePath, String password, String alias) {
         ObjectSign objectSign = new ObjectSign();
         objectSign.setObjectCertificate(CertificateService.buildObjectCertificate(keyStoreFilePath, password, alias));
 
         objectSign.setSigner(new RSASSASigner(objectSign.getObjectCertificate().getPrivateKey()));
+
         return objectSign;
     }
 
@@ -50,30 +50,56 @@ public class ObjectSignService implements Serializable {
             }
 
         } catch (CertificateEncodingException e) {
-            e.printStackTrace();
+            log.debug("ObjectSignService.addHeader CertificateEncodingException {}", e);
         }
 
     }
 
-    public String sign(ObjectSign objectSign) throws JOSEException {
+    /**
+     * sign an object
+     * 
+     * @param objectSign
+     * @param flat
+     *            generate a flattened version
+     * @return String signature
+     * @throws JOSEException
+     */
+    public String sign(ObjectSign objectSign, boolean flat) throws JOSEException {
         objectSign.setJwsObject(new JWSObject(objectSign.getHeader(), new Payload(objectSign.getData())));
         objectSign.getJwsObject().sign(objectSign.getSigner());
-        return objectSign.getJwsObject().serialize();
+        if (!flat)
+            return objectSign.getJwsObject().serialize();
+        return SignUtil.fromCompactToFlattenedSignature(objectSign.getJwsObject().serialize());
     }
 
-    public String signFlattenedJWS(ObjectSign objectSign) throws JOSEException {
-        objectSign.setJwsObject(new JWSObject(objectSign.getHeader(), new Payload(objectSign.getData())));
-        objectSign.getJwsObject().sign(objectSign.getSigner());
-        String s = objectSign.getJwsObject().serialize();
-        String[] splitted = s.split("\\.");
-        JSONObject json = new JSONObject();
-        if (splitted.length > 0) {
+    /**
+     * 
+     * @param objectSign
+     * @param signature
+     * @param flat
+     * @return String payload
+     */
+    public String verifySignedObject(String keyStoreFilePath, String password, String alias, String signature,
+            boolean flat) {
+        ObjectCertificate objectCertificate = CertificateService.buildObjectCertificate(keyStoreFilePath, password,
+                alias);
+        JWSObject jwsObject = null;
+        try {
+            if (flat)
+                jwsObject = JWSObject.parse(SignUtil.fromFlattenedToCompactSignature(signature));
+            else
+                jwsObject = JWSObject.parse(signature);
 
-            json.put("payload", splitted[0]);
-            json.put("protected", splitted[1]);
-            json.put("signature", splitted[2]);
+            JWSVerifier verifier = new RSASSAVerifier((RSAPublicKey) objectCertificate.getPublicKey());
+
+            jwsObject.verify(verifier);
+            return jwsObject.getPayload().toString();
+        } catch (JOSEException e) {
+            log.debug("ObjectSignService.verifySignedObject JOSEException {}", e);
+        } catch (ParseException e) {
+            log.debug("ObjectSignService.verifySignedObject ParseException {}", e);
         }
-        return json.toJSONString();
+        return null;
     }
 
 }

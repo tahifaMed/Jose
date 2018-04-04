@@ -4,7 +4,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@ComponentScan("org.natixis.jose")
+@ComponentScan(basePackages = { "com.natixis.jose" })
 public class JoseApplicationConfiguration {
 
 }
